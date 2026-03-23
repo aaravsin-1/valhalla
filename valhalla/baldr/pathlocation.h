@@ -241,6 +241,18 @@ public:
     if (loc.has_preferred_layer_case()) {
       l.preferred_layer_ = loc.preferred_layer();
     }
+
+    //edge_id in locate request #3412 - https://github.com/valhalla/valhalla/issues/3412
+    //we need to copy explicit edge IDs from the proto into C++ location struct
+    //These were Optional list of explicit edge IDs (GraphId encoded as uint64) for this location.
+    //[raw uint64 representations of valhalla::baldr::GraphId values]
+    //If present Loki will skip spatial search and instead use these to build PathLocation
+    //if this list is empty means normal Loki spatial search instead
+    for(const auto& eid : loc.path_edges() ){
+      l.path_edges_.push_back(eid);
+    }
+
+
     return l;
   }
 
