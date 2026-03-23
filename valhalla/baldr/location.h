@@ -5,9 +5,12 @@
 #include <valhalla/midgard/pointll.h>
 #include <valhalla/proto/common.pb.h>
 
+
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
+
 
 namespace valhalla {
 namespace baldr {
@@ -124,6 +127,13 @@ public:
 
   std::optional<int8_t> preferred_layer_;
 
+  //edge_id in locate request #3412 - https://github.com/valhalla/valhalla/issues/3412
+  // Optional list of explicit edge IDs (raw uint64 GraphId values) for this location.
+  // When non-empty, Loki's Search::search will skip the spatial bin search and directly
+  // construct a PathLocation using these edges. 
+  // Populated from the proto Location.path_edges field by PathLocation::fromPBF().
+  std::vector<uint64_t> path_edges_;
+  
 protected:
 };
 
