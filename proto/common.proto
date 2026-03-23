@@ -163,6 +163,14 @@ message Location {
     RoadClass street_side_cutoff = 30;
   }
 
+  //For Issue #3412 to include edge_id in locate request - https://github.com/valhalla/valhalla/issues/3412
+  //we allow an optional list of GraphIds to be provided for edges this location snaps to
+  // if given Loki will skip spatial Search and directly make PathLocation from the provided edge_id s
+  //Each value is a raw valhalla::baldr::GraphId cast to uint64.
+
+  repeated uint64 path_edges = 31;
+
+
   // This information will be ignored if provided in the request. Instead it will be filled in as the request is handled
   Correlation correlation = 90;
   string time_zone_offset = 91;
