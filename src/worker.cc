@@ -310,6 +310,21 @@ void parse_location(valhalla::Location* location,
       location->set_street_side_cutoff(cutoff_street_side);
     }
   }
+  // Parse explicit edge IDs for this location (issue #3412).
+  // If provided, Loki will skip its spatial bin search and snap directly to
+  // these edges. Each value is a raw uint64 representation of a GraphId.
+  // See: https://github.com/valhalla/valhalla/issues/3412
+  auto path_edges_array = rapidjson::get_child_optional(r_loc, "/path_edges");
+  if (path_edges_array && path_edges_array->IsArray()) {
+    for (const auto& edge_id_val : path_edges_array->GetArray()) {
+      if (edge_id_val.IsUint64()) {
+        location->add_path_edges(edge_id_val.GetUint64());
+      }
+    }
+  }
+
+
+
 
   boost::optional<bool> exclude_closures;
   // is it json?
