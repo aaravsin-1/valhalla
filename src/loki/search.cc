@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <limits>
 #include <unordered_set>
 
 using namespace valhalla::midgard;
@@ -864,7 +865,130 @@ Search::search(const std::vector<vb::Location>& locations, const cost_ptr_t& cos
   if (locations.empty())
     return std::unordered_map<vb::Location, PathLocation>{};
 
-  return handler_->search(locations, costing);
+  //edge_id in locate request #3412 - https://github.com/valhalla/valhalla/issues/3412
+  std::unordered_map<vb::Location, PathLocation> results;
+
+  // Locations that have no edge IDs mentioned are collected here and passed to the
+  // normal spatial bin search (handler_->search) after the loop below.
+  std::vector<vb::Location> needs_search;
+
+  for (const auto& loc : locations) {
+  // if the caller gives explicit edge IDs for this location 
+  //skip the loki spatial search
+  //It avoids the cost of a proximity search and eliminates
+  //the ambiguity of snapping to the wrong edge
+  //this was for: edge_id in locate request #3412 - https://github.com/valhalla/valhalla/issues/3412
+  if(!loc.path_edges_.empty()){
+    PathLocation correlated(loc);
+
+    for(const auto raw_id:loc.path_edges_){
+      GraphId edge_id(raw_id);
+      //load the tile and directed edge for this GraphId
+      //handle edge case -> SKIP IF INVALID / BAD ID  
+      //but still continue for other ids
+      graph_tile_ptr tile;
+      const auto* edge = reader_.directededge(edge_id,tile);
+      if(!edge || !tile)
+      {
+        continue;
+      }
+      //Get the shape of this edge
+      //shape is always stored in forward direction,
+      //if directed edge traverses the shape in reverse[edge->forward() is false]
+      //we have to flip the shape so that 0 corresponds to start node of the 
+      //directed edge and the percent_along value we compute is correct relative
+      //to how Thor would traverse it
+
+      auto shape = tile->edgeinfo(edge).shape();
+        if (!edge->forward()) {
+          std::reverse(shape.begin(), shape.end());
+        }
+
+        if (shape.size() < 2) {
+          // Degenerate edge with no meaningful geometry,skip it.
+          continue;
+        }
+
+      //now we project the location's coordinate onto the edge shape to get:
+      //  projected - closest point on edge to loc.latlng_
+      //  percent_along - how far along the edge that point is (0.0-1.0)
+      //
+      //We iterate over each segment of the shape polyline, project the
+      //location onto that segment using projector_t, and keep track of the
+      //closest result. 
+      //percent_along is then the ratio of arc-length from
+      //the start of the edge to the projected point over the total edge
+      //arc-length.
+      
+      projector_t projector(loc.latlng_);
+
+        midgard::PointLL best_point = shape.front();
+        double best_sq_dist = std::numeric_limits<double>::max();
+        double length_to_best = 0.0;
+        double total_length = 0.0;
+
+        for (size_t i = 0; i + 1 < shape.size(); ++i) {
+          // Project loc onto segment shape[i] -> shape[i+1]
+          const auto candidate = projector(shape[i], shape[i + 1]);
+          const double sq_dist = loc.latlng_.DistanceSquared(candidate);
+          const double seg_len = shape[i].Distance(shape[i + 1]);
+
+          if (sq_dist < best_sq_dist) {
+            best_sq_dist = sq_dist;
+            best_point = candidate;
+            // Arc length to projection = sum of all prior segments
+            // plus distance from the start of this segment to the
+            // projected point on it.
+            length_to_best = total_length + shape[i].Distance(candidate);
+          }
+          total_length += seg_len;
+        }
+
+        // Guard against degenerate zero-length edges.
+        double percent_along = (total_length > 0.0) ? (length_to_best / total_length) : 0.0;
+        // Clamp to [0, 1] to guard against floating-point overshoot.
+        percent_along = std::max(0.0, std::min(1.0, percent_along));
+
+        // Distance from the original location to the projected point.
+        // PathEdge calls this "score" — lower is better.
+        const double dist = loc.latlng_.Distance(best_point);
+
+        correlated.edges.emplace_back(edge_id, percent_along, best_point, dist);
+        //testing for 3412 - LOG_INFO("path_edges bypass fired for edge_id: " + std::to_string(raw_id));
+      }
+
+      // Only store the result if at least one edge was successfully resolved.
+      // If every supplied edge ID was invalid, we fall through to the normal
+      // spatial search below so the request still has a chance to succeed.
+      if (!correlated.edges.empty()) {
+        results.emplace(loc, std::move(correlated));
+        continue;
+      }
+    }
+
+    // Normal path: location has no explicit edge IDs (or all supplied IDs were
+    // invalid). Queue it for Loki's regular spatial bin search.
+    //testing for 3412 - LOG_INFO("normal spatial search will run for this location");
+    needs_search.push_back(loc);
+
+  }
+
+  // Run the spatial bin search for all locations that need it.
+  if (!needs_search.empty()) {
+    auto searched = handler_->search(needs_search, costing);
+    //debugging for 3412
+    // for (const auto& kv : searched) {
+    //   for (const auto& pe : kv.second.edges) {
+    //     LOG_INFO("normal search found edge_id: " + std::to_string(pe.id) +
+    //              " raw_uint64: " + std::to_string(pe.id.value));
+    //   }
+    // }
+    results.insert(std::make_move_iterator(searched.begin()),
+                   std::make_move_iterator(searched.end()));
+  }
+
+  return results;
+  //return handler_->search(locations, costing);
 }
 
 } // namespace loki
