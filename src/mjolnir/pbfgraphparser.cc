@@ -20,6 +20,9 @@
 #include <boost/algorithm/string/trim.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <osmium/io/pbf_input.hpp>
+#ifdef HAVE_EXPAT
+#include <osmium/io/xml_input.hpp>
+#endif
 
 #include <thread>
 #include <utility>
@@ -193,6 +196,9 @@ struct graph_parser {
       if (!infer_internal_intersections_) {
         way_.set_internal(tag_.second == "true" ? true : false);
       }
+    };
+    tag_handlers_["tagged_internal_intersection"] = [this]() {
+      way_.set_internal(tag_.second == "true");
     };
     tag_handlers_["turn_channel"] = [this]() {
       if (!infer_turn_channels_) {
@@ -433,6 +439,10 @@ struct graph_parser {
           break;
         case Use::kOther:
           way_.set_use(Use::kOther);
+          break;
+        case Use::kPlatform:
+          way_.set_use(Use::kPlatform);
+          way_.set_road_class(RoadClass::kServiceOther);
           break;
         case Use::kConstruction:
           way_.set_use(Use::kConstruction);
@@ -2022,7 +2032,9 @@ struct graph_parser {
     }
 
     std::string buffer;
-    bss_info.SerializeToString(&buffer);
+    if (!bss_info.SerializeToString(&buffer)) {
+      throw std::runtime_error("Failed to serialize BSS info");
+    }
     const uint32_t bss_info_index = osmdata_.node_names.index(buffer);
     ++osmdata_.node_name_count;
 
@@ -2169,6 +2181,10 @@ struct graph_parser {
         ref_katakana_ = tag.second;
       } else if (tag.first == "ref:pronunciation:jeita") {
         ref_jeita_ = tag.second;
+      } else if (tag.first == "amenity" && tag.second == "parking") {
+        osmdata_.edge_count += !intersection;
+        intersection = true;
+        n.set_type(NodeType::kParking);
       } else if (tag.first == "gate" && tag.second == "true") {
         osmdata_.edge_count += !intersection;
         intersection = true;
